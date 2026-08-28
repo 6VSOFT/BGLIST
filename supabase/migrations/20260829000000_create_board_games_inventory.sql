@@ -18,7 +18,9 @@ create policy "Signed-in staff can add shared board games" on public.board_games
 create policy "Signed-in staff can edit shared board games" on public.board_games for update to authenticated using (true) with check ((select auth.uid()) is not null);
 create policy "Signed-in staff can delete shared board games" on public.board_games for delete to authenticated using (true);
 create or replace function public.set_board_games_updated_at()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql
+set search_path = ''
+as $$
 begin
   new.updated_at = now();
   new.updated_by = auth.uid();
