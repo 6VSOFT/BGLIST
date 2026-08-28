@@ -1,0 +1,5 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base { body { @apply min-h-screen bg-slate-100 text-slate-900; } input, select, textarea { @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-100; } label { @apply mb-1 block text-sm font-medium text-slate-700; } }
