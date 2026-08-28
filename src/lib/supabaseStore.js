@@ -5,13 +5,38 @@ const toGame = row => ({ id: row.id, nameZh: row.name_zh, nameEn: row.name_en, c
 
 export async function ensureSupabaseSession() {
   if (!supabaseEnabled) return null
-  const { data: { session } } = await supabase.auth.getSession()
-  if (session) return session
-  const { data, error } = await supabase.auth.signInAnonymously()
+  const { data: { session }, error } = await supabase.auth.getSession()
+  if (error) throw error
+  return session
+}
+
+export async function signInStaff(email, password) {
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
   if (error) throw error
   return data.session
+}
+
+export async function signUpStaff(email, password) {
+  const { data, error } = await supabase.auth.signUp({ email, password })
+  if (error) throw error
+  return data
+}
+
+export async function signOutStaff() {
+  const { error } = await supabase.auth.signOut()
+  if (error) throw error
 }
 export async function loadCloudGames() { if (!supabaseEnabled) return null; const { data, error } = await supabase.from('board_games').select('*').order('updated_at', { ascending: false }); if (error) throw error; return data.map(toGame) }
 export async function saveCloudGame(game) { if (!supabaseEnabled) return false; const { error } = await supabase.from('board_games').upsert(toRow(game), { onConflict: 'id' }); if (error) throw error; return true }
 export async function saveCloudGames(games) { if (!supabaseEnabled || !games.length) return false; const { error } = await supabase.from('board_games').upsert(games.map(toRow), { onConflict: 'id' }); if (error) throw error; return true }
-export function subscribeToCloudGames(onChange) { return supabaseEnabled ? supabase.channel('board-games-inventory').on('postgres_changes', { event: '*', schema: 'public', table: 'board_games' }, onChange).subscribe() : null }
+export function subscribeToCloudGames(onChange) {
+  if (!supabaseEnabled) return null
+  const channel = supabase.channel(`board-games-inventory-${crypto.randomUUID?.() || Date.now()}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'board_games' }, onChange)
+    .subscribe()
+  return channel
+}
+
+export function unsubscribeFromCloudGames(channel) {
+  return channel ? supabase.removeChannel(channel) : Promise.resolve()
+}
