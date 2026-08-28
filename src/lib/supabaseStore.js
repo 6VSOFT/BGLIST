@@ -29,11 +29,11 @@ export async function signOutStaff() {
 export async function loadCloudGames() { if (!supabaseEnabled) return null; const { data, error } = await supabase.from('board_games').select('*').order('updated_at', { ascending: false }); if (error) throw error; return data.map(toGame) }
 export async function saveCloudGame(game) { if (!supabaseEnabled) return false; const { error } = await supabase.from('board_games').upsert(toRow(game), { onConflict: 'id' }); if (error) throw error; return true }
 export async function saveCloudGames(games) { if (!supabaseEnabled || !games.length) return false; const { error } = await supabase.from('board_games').upsert(games.map(toRow), { onConflict: 'id' }); if (error) throw error; return true }
-export function subscribeToCloudGames(onChange) {
+export function subscribeToCloudGames(onChange, onStatus) {
   if (!supabaseEnabled) return null
   const channel = supabase.channel(`board-games-inventory-${crypto.randomUUID?.() || Date.now()}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'board_games' }, onChange)
-    .subscribe()
+    .subscribe(onStatus)
   return channel
 }
 

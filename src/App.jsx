@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Cloud, CloudOff, Gamepad2, LogOut, Pencil, Plus, Search, Users } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Cloud, CloudOff, Gamepad2, LogOut, Pencil, Plus, RefreshCw, Search, Users } from 'lucide-react'
 import ItemForm from './components/ItemForm'
 import ImageGallery from './components/ImageGallery'
 import StaffAccess from './components/StaffAccess'
@@ -17,6 +17,9 @@ export default function App() {
   const [syncStatus, setSyncStatus] = useState(supabaseEnabled ? '请登录以同步库存。' : '尚未配置云端同步，资料只保存在本机。')
   const [authBusy, setAuthBusy] = useState(false)
   const [authError, setAuthError] = useState('')
+  const [syncing, setSyncing] = useState(false)
+  const gamesRef = useRef(games)
+  const syncingRef = useRef(false)
 
   useEffect(() => {
     let active = true
@@ -28,6 +31,8 @@ export default function App() {
     if (hydrated) persistGames(games).then(ok => { if (!ok) setSaveError('储存空间不足，请减少图片数量或大小后重试。') })
   }, [games, hydrated])
 
+  useEffect(() => { gamesRef.current = games }, [games])
+
   useEffect(() => {
     if (!supabaseEnabled) return undefined
     let active = true
@@ -36,24 +41,40 @@ export default function App() {
     return () => { active = false; subscription.unsubscribe() }
   }, [])
 
+  const syncFromCloud = useCallback(async () => {
+    if (!session || syncingRef.current) return
+    syncingRef.current = true
+    setSyncing(true)
+    try {
+      const remoteGames = await loadCloudGames()
+      if (remoteGames.length) setGames(remoteGames)
+      else if (gamesRef.current.length) await saveCloudGames(gamesRef.current)
+      setSyncStatus('云端已同步 · 所有登录设备会自动更新')
+    } catch (error) {
+      setSyncStatus(`云端同步失败：${error.message}`)
+    } finally {
+      syncingRef.current = false
+      setSyncing(false)
+    }
+  }, [session])
+
   useEffect(() => {
     if (!hydrated || !session) return undefined
-    let active = true
     let channel
-    const refresh = async () => {
-      try {
-        const remoteGames = await loadCloudGames()
-        if (!active) return
-        if (remoteGames.length) setGames(remoteGames)
-        else if (games.length) await saveCloudGames(games)
-        if (active) setSyncStatus('云端已同步 · 所有登录设备会自动更新')
-      } catch (error) {
-        if (active) setSyncStatus(`云端同步失败：${error.message}`)
-      }
+    const onVisible = () => { if (document.visibilityState === 'visible') syncFromCloud() }
+    syncFromCloud().then(() => {
+      channel = subscribeToCloudGames(syncFromCloud, status => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setSyncStatus('实时连接失败，已改为在联网或回到页面时自动重试。')
+      })
+    })
+    window.addEventListener('online', syncFromCloud)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.removeEventListener('online', syncFromCloud)
+      document.removeEventListener('visibilitychange', onVisible)
+      unsubscribeFromCloudGames(channel)
     }
-    refresh().then(() => { if (active) channel = subscribeToCloudGames(refresh) })
-    return () => { active = false; unsubscribeFromCloudGames(channel) }
-  }, [hydrated, session])
+  }, [hydrated, session, syncFromCloud])
 
   const shown = games.filter(g => `${g.nameZh} ${g.nameEn} ${g.sku}`.toLowerCase().includes(query.toLowerCase()))
   const save = async game => {
@@ -71,13 +92,17 @@ export default function App() {
     try {
       if (mode === 'signup') {
         const result = await signUpStaff(email, password)
-        if (!result.session) setAuthError('账号已创建，请先到邮箱完成验证，再登录。')
-      } else await signInStaff(email, password)
+        if (result.session) setSession(result.session)
+        else setAuthError('账号已创建，请先到邮箱完成验证，再登录。')
+      } else {
+        const nextSession = await signInStaff(email, password)
+        setSession(nextSession)
+      }
     } catch (error) { setAuthError(error.message) } finally { setAuthBusy(false) }
   }
-  const signOut = async () => { try { await signOutStaff(); setSyncStatus('已退出云端同步。') } catch (error) { setAuthError(error.message) } }
+  const signOut = async () => { try { await signOutStaff(); setSession(null); setSyncStatus('已退出云端同步。') } catch (error) { setAuthError(error.message) } }
 
-  return <main className="mx-auto max-w-6xl p-4 sm:p-7"><header className="mb-7 flex flex-wrap items-center justify-between gap-4"><div className="flex items-center gap-3"><div className="rounded-xl bg-teal-700 p-3 text-white"><Gamepad2 /></div><div><h1 className="text-xl font-bold">Meeple POS</h1><p className="text-sm text-slate-500">桌游库存维护</p></div></div><div className="flex items-center gap-2">{session && <button onClick={signOut} className="inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-sm"><LogOut size={16}/>退出</button>}<button onClick={() => setEditing({})} className="inline-flex items-center gap-2 rounded-xl bg-teal-700 px-4 py-2.5 font-medium text-white shadow-sm"><Plus size={18}/>新增桌游</button></div></header>
+  return <main className="mx-auto max-w-6xl p-4 sm:p-7"><header className="mb-7 flex flex-wrap items-center justify-between gap-4"><div className="flex items-center gap-3"><div className="rounded-xl bg-teal-700 p-3 text-white"><Gamepad2 /></div><div><h1 className="text-xl font-bold">Meeple POS</h1><p className="text-sm text-slate-500">桌游库存维护</p></div></div><div className="flex items-center gap-2">{session && <><button onClick={syncFromCloud} disabled={syncing} className="inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-sm disabled:opacity-60"><RefreshCw className={syncing ? 'animate-spin' : ''} size={16}/>同步</button><button onClick={signOut} className="inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-sm"><LogOut size={16}/>退出</button></>}<button onClick={() => setEditing({})} className="inline-flex items-center gap-2 rounded-xl bg-teal-700 px-4 py-2.5 font-medium text-white shadow-sm"><Plus size={18}/>新增桌游</button></div></header>
     {supabaseEnabled && !session && <StaffAccess busy={authBusy} error={authError} onSignIn={(email, password) => authenticate(email, password, 'signin')} onSignUp={(email, password) => authenticate(email, password, 'signup')} />}
     <p className={`mb-4 flex items-center gap-2 rounded-lg p-3 text-sm ${session ? 'bg-teal-50 text-teal-800' : 'bg-amber-50 text-amber-800'}`}>{session ? <Cloud size={16}/> : <CloudOff size={16}/>}{syncStatus}</p>
     {saveError && <p className="mb-4 rounded-lg bg-rose-50 p-3 text-sm text-rose-700">{saveError}</p>}
