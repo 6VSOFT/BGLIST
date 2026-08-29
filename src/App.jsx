@@ -5,7 +5,7 @@ import ImageGallery from './components/ImageGallery'
 import StaffAccess from './components/StaffAccess'
 import { getGames, persistGames, readPersistedGames } from './lib/stockStore'
 import { supabase, supabaseEnabled } from './lib/supabase'
-import { ensureSupabaseSession, loadCloudGames, saveCloudGame, saveCloudGames, signInStaff, signOutStaff, signUpStaff, subscribeToCloudGames, unsubscribeFromCloudGames } from './lib/supabaseStore'
+import { ensureSupabaseSession, loadCloudGameImages, loadCloudGames, saveCloudGame, saveCloudGames, signInStaff, signOutStaff, signUpStaff, subscribeToCloudGames, unsubscribeFromCloudGames } from './lib/supabaseStore'
 
 export default function App() {
   const [games, setGames] = useState(getGames)
@@ -20,6 +20,7 @@ export default function App() {
   const [syncing, setSyncing] = useState(false)
   const gamesRef = useRef(games)
   const syncingRef = useRef(false)
+  const loadingImagesRef = useRef(new Set())
 
   useEffect(() => {
     let active = true
@@ -32,6 +33,19 @@ export default function App() {
   }, [games, hydrated])
 
   useEffect(() => { gamesRef.current = games }, [games])
+
+  const hydrateCloudImages = useCallback(async cloudGames => {
+    for (const game of cloudGames) {
+      if (loadingImagesRef.current.has(game.id)) continue
+      loadingImagesRef.current.add(game.id)
+      try {
+        const images = await loadCloudGameImages(game.id)
+        setGames(current => current.map(item => item.id === game.id ? { ...item, images } : item))
+      } catch (error) {
+        console.warn(`图片加载失败（${game.nameZh}），库存资料仍可使用。`, error)
+      } finally { loadingImagesRef.current.delete(game.id) }
+    }
+  }, [])
 
   useEffect(() => {
     if (!supabaseEnabled) return undefined
@@ -47,7 +61,12 @@ export default function App() {
     setSyncing(true)
     try {
       const remoteGames = await loadCloudGames()
-      if (remoteGames.length) setGames(remoteGames)
+      if (remoteGames.length) {
+        const cachedImages = new Map(gamesRef.current.map(game => [game.id, game.images]))
+        const gamesWithCachedImages = remoteGames.map(game => ({ ...game, images: cachedImages.get(game.id) || [] }))
+        setGames(gamesWithCachedImages)
+        hydrateCloudImages(gamesWithCachedImages)
+      }
       else if (gamesRef.current.length) await saveCloudGames(gamesRef.current)
       setSyncStatus('云端已同步 · 所有登录设备会自动更新')
     } catch (error) {
@@ -56,7 +75,7 @@ export default function App() {
       syncingRef.current = false
       setSyncing(false)
     }
-  }, [session])
+  }, [hydrateCloudImages, session])
 
   useEffect(() => {
     if (!hydrated || !session) return undefined

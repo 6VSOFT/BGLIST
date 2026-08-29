@@ -2,6 +2,7 @@ import { supabase, supabaseEnabled } from './supabase'
 
 const toRow = game => ({ id: game.id, name_zh: game.nameZh, name_en: game.nameEn || '', category: game.category, sku: game.sku || '', min_players: game.minPlayers, max_players: game.maxPlayers, age: game.age, duration: game.duration, weight: game.weight, total_sets: game.totalSets, status: game.status, location: game.location || '', bundles: game.bundles || '', images: game.images || [] })
 const toGame = row => ({ id: row.id, nameZh: row.name_zh, nameEn: row.name_en, category: row.category, sku: row.sku, minPlayers: row.min_players, maxPlayers: row.max_players, age: row.age, duration: row.duration, weight: Number(row.weight), totalSets: row.total_sets, status: row.status, location: row.location, bundles: row.bundles, images: row.images || [] })
+const gameFields = 'id,name_zh,name_en,category,sku,min_players,max_players,age,duration,weight,total_sets,status,location,bundles,created_at,updated_at'
 
 export async function ensureSupabaseSession() {
   if (!supabaseEnabled) return null
@@ -26,7 +27,14 @@ export async function signOutStaff() {
   const { error } = await supabase.auth.signOut()
   if (error) throw error
 }
-export async function loadCloudGames() { if (!supabaseEnabled) return null; const { data, error } = await supabase.from('board_games').select('*').order('updated_at', { ascending: false }); if (error) throw error; return data.map(toGame) }
+// 图片可能是大尺寸 Data URL。列表同步刻意不读取 images，避免移动网络因数十 MB 的 JSON 查询超时。
+export async function loadCloudGames() { if (!supabaseEnabled) return null; const { data, error } = await supabase.from('board_games').select(gameFields).order('updated_at', { ascending: false }); if (error) throw error; return data.map(toGame) }
+export async function loadCloudGameImages(id) {
+  if (!supabaseEnabled) return []
+  const { data, error } = await supabase.from('board_games').select('images').eq('id', id).single()
+  if (error) throw error
+  return Array.isArray(data.images) ? data.images : []
+}
 export async function saveCloudGame(game) { if (!supabaseEnabled) return false; const { error } = await supabase.from('board_games').upsert(toRow(game), { onConflict: 'id' }); if (error) throw error; return true }
 export async function saveCloudGames(games) { if (!supabaseEnabled || !games.length) return false; const { error } = await supabase.from('board_games').upsert(games.map(toRow), { onConflict: 'id' }); if (error) throw error; return true }
 export function subscribeToCloudGames(onChange, onStatus) {
