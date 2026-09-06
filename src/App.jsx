@@ -1,131 +1,26 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { ClipboardPenLine, Cloud, CloudOff, Gamepad2, LogOut, Pencil, Plus, RefreshCw, Search, Users } from 'lucide-react'
-import ItemForm from './components/ItemForm'
-import ImageGallery from './components/ImageGallery'
-import JudgeTool from './components/JudgeTool'
-import StaffAccess from './components/StaffAccess'
-import { getGames, persistGames, readPersistedGames } from './lib/stockStore'
-import { supabase, supabaseEnabled } from './lib/supabase'
-import { ensureSupabaseSession, loadCloudGameImages, loadCloudGames, saveCloudGame, saveCloudGames, signInStaff, signOutStaff, signUpStaff, subscribeToCloudGames, unsubscribeFromCloudGames } from './lib/supabaseStore'
+import { useMemo, useState } from 'react'
+import { ChevronLeft, ChevronRight, CircleHelp, Crown, Eye, FileText, Moon, RotateCcw, Settings2, Skull, Sparkles, Sun, Swords, Users, X } from 'lucide-react'
 
-export default function App() {
-  const [games, setGames] = useState(getGames)
-  const [editing, setEditing] = useState(null)
-  const [judgeOpen, setJudgeOpen] = useState(false)
-  const [query, setQuery] = useState('')
-  const [hydrated, setHydrated] = useState(false)
-  const [saveError, setSaveError] = useState('')
-  const [session, setSession] = useState(null)
-  const [syncStatus, setSyncStatus] = useState(supabaseEnabled ? '请登录以同步库存。' : '尚未配置云端同步，资料只保存在本机。')
-  const [authBusy, setAuthBusy] = useState(false)
-  const [authError, setAuthError] = useState('')
-  const [syncing, setSyncing] = useState(false)
-  const gamesRef = useRef(games)
-  const syncingRef = useRef(false)
-  const loadingImagesRef = useRef(new Set())
+const defaultRoles = [['预言家','神职'],['女巫','神职'],['猎人','神职'],['守卫','神职'],['狼人','狼人'],['狼人','狼人'],['平民','好人'],['平民','好人'],['平民','好人']]
+const steps = [
+  { title:'狼人行动', hint:'请狼人睁眼，选择今晚袭击的目标', icon:Moon }, { title:'守卫行动', hint:'请守卫睁眼，选择今晚守护的目标', icon:Sparkles },
+  { title:'女巫行动', hint:'请女巫睁眼，决定是否使用药剂', icon:CircleHelp }, { title:'预言家查验', hint:'请预言家睁眼，选择要查验的玩家', icon:Eye },
+  { title:'天亮了', hint:'公布昨夜结果，开始白天发言与放逐', icon:Sun }
+]
+const makePlayers=()=>defaultRoles.map(([role,camp],i)=>({id:i+1,role,camp,alive:true,selected:false,revealed:false}))
+const roleColor=camp=>camp==='狼人'?'wolf':camp==='神职'?'god':'folk'
 
-  useEffect(() => {
-    let active = true
-    readPersistedGames().then(saved => { if (active) { setGames(saved); setHydrated(true) } })
-    return () => { active = false }
-  }, [])
-
-  useEffect(() => {
-    if (hydrated) persistGames(games).then(ok => { if (!ok) setSaveError('储存空间不足，请减少图片数量或大小后重试。') })
-  }, [games, hydrated])
-
-  useEffect(() => { gamesRef.current = games }, [games])
-
-  const hydrateCloudImages = useCallback(async cloudGames => {
-    for (const game of cloudGames) {
-      if (loadingImagesRef.current.has(game.id)) continue
-      loadingImagesRef.current.add(game.id)
-      try {
-        const images = await loadCloudGameImages(game.id)
-        setGames(current => current.map(item => item.id === game.id ? { ...item, images } : item))
-      } catch (error) {
-        console.warn(`图片加载失败（${game.nameZh}），库存资料仍可使用。`, error)
-      } finally { loadingImagesRef.current.delete(game.id) }
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!supabaseEnabled) return undefined
-    let active = true
-    ensureSupabaseSession().then(current => { if (active) setSession(current) }).catch(error => { if (active) setAuthError(error.message) })
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, current) => { if (active) setSession(current) })
-    return () => { active = false; subscription.unsubscribe() }
-  }, [])
-
-  const syncFromCloud = useCallback(async () => {
-    if (!session || syncingRef.current) return
-    syncingRef.current = true
-    setSyncing(true)
-    try {
-      const remoteGames = await loadCloudGames()
-      if (remoteGames.length) {
-        const cachedImages = new Map(gamesRef.current.map(game => [game.id, game.images]))
-        const gamesWithCachedImages = remoteGames.map(game => ({ ...game, images: cachedImages.get(game.id) || [] }))
-        setGames(gamesWithCachedImages)
-        hydrateCloudImages(gamesWithCachedImages)
-      }
-      else if (gamesRef.current.length) await saveCloudGames(gamesRef.current)
-      setSyncStatus('云端已同步 · 所有登录设备会自动更新')
-    } catch (error) {
-      setSyncStatus(`云端同步失败：${error.message}`)
-    } finally {
-      syncingRef.current = false
-      setSyncing(false)
-    }
-  }, [hydrateCloudImages, session])
-
-  useEffect(() => {
-    if (!hydrated || !session) return undefined
-    let channel
-    const onVisible = () => { if (document.visibilityState === 'visible') syncFromCloud() }
-    syncFromCloud().then(() => {
-      channel = subscribeToCloudGames(syncFromCloud, status => {
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setSyncStatus('实时连接失败，已改为在联网或回到页面时自动重试。')
-      })
-    })
-    window.addEventListener('online', syncFromCloud)
-    document.addEventListener('visibilitychange', onVisible)
-    return () => {
-      window.removeEventListener('online', syncFromCloud)
-      document.removeEventListener('visibilitychange', onVisible)
-      unsubscribeFromCloudGames(channel)
-    }
-  }, [hydrated, session, syncFromCloud])
-
-  const shown = games.filter(g => `${g.nameZh} ${g.nameEn} ${g.sku}`.toLowerCase().includes(query.toLowerCase()))
-  const save = async game => {
-    setSaveError('')
-    setGames(list => list.some(g => g.id === game.id) ? list.map(g => g.id === game.id ? game : g) : [game, ...list])
-    setEditing(null)
-    if (!session) return
-    try {
-      await saveCloudGame(game)
-      setSyncStatus('云端已同步 · 所有登录设备会自动更新')
-    } catch (error) { setSyncStatus(`本机已保存，但云端同步失败：${error.message}`) }
-  }
-  const authenticate = async (email, password, mode) => {
-    setAuthBusy(true); setAuthError('')
-    try {
-      if (mode === 'signup') {
-        const result = await signUpStaff(email, password)
-        if (result.session) setSession(result.session)
-        else setAuthError('账号已创建，请先到邮箱完成验证，再登录。')
-      } else {
-        const nextSession = await signInStaff(email, password)
-        setSession(nextSession)
-      }
-    } catch (error) { setAuthError(error.message) } finally { setAuthBusy(false) }
-  }
-  const signOut = async () => { try { await signOutStaff(); setSession(null); setSyncStatus('已退出云端同步。') } catch (error) { setAuthError(error.message) } }
-
-  return <main className={`mx-auto p-4 sm:p-7 ${judgeOpen ? 'max-w-[1600px]' : 'max-w-6xl'}`}><header className="mb-7 flex flex-wrap items-center justify-between gap-4"><div className="flex items-center gap-3"><div className="rounded-xl bg-teal-700 p-3 text-white"><Gamepad2 /></div><div><h1 className="text-xl font-bold">Meeple POS</h1><p className="text-sm text-slate-500">桌游库存维护</p></div></div><div className="flex items-center gap-2"><button onClick={() => { setEditing(null); setJudgeOpen(true) }} className="inline-flex items-center gap-2 rounded-xl border border-teal-700 px-4 py-2.5 font-medium text-teal-800"><ClipboardPenLine size={18}/>法官工具</button>{session && <><button onClick={syncFromCloud} disabled={syncing} className="inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-sm disabled:opacity-60"><RefreshCw className={syncing ? 'animate-spin' : ''} size={16}/>同步</button><button onClick={signOut} className="inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-sm"><LogOut size={16}/>退出</button></>}<button onClick={() => { setJudgeOpen(false); setEditing({}) }} className="inline-flex items-center gap-2 rounded-xl bg-teal-700 px-4 py-2.5 font-medium text-white shadow-sm"><Plus size={18}/>新增桌游</button></div></header>
-    {supabaseEnabled && !session && <StaffAccess busy={authBusy} error={authError} onSignIn={(email, password) => authenticate(email, password, 'signin')} onSignUp={(email, password) => authenticate(email, password, 'signup')} />}
-    <p className={`mb-4 flex items-center gap-2 rounded-lg p-3 text-sm ${session ? 'bg-teal-50 text-teal-800' : 'bg-amber-50 text-amber-800'}`}>{session ? <Cloud size={16}/> : <CloudOff size={16}/>}{syncStatus}</p>
-    {saveError && <p className="mb-4 rounded-lg bg-rose-50 p-3 text-sm text-rose-700">{saveError}</p>}
-    {judgeOpen ? <JudgeTool session={session} onClose={() => setJudgeOpen(false)} /> : editing !== null ? <section className="rounded-2xl bg-white p-5 shadow-sm sm:p-7"><h2 className="mb-6 text-lg font-bold">{editing.id ? '编辑桌游' : '新增桌游'}</h2><ItemForm initial={editing} onSave={save} onCancel={() => setEditing(null)} /></section> : <><div className="relative mb-5"><Search className="absolute left-3 top-2.5 text-slate-400" size={18}/><input className="pl-10" placeholder="搜索名称或 SKU" value={query} onChange={e => setQuery(e.target.value)}/></div><section className="grid gap-4 md:grid-cols-2">{shown.map(game => <article key={game.id} className="overflow-hidden rounded-2xl bg-white shadow-sm"><div className="p-4"><ImageGallery images={game.images}/></div><div className="space-y-3 border-t p-5"><div className="flex justify-between gap-3"><div><h2 className="font-bold">{game.nameZh}</h2><p className="text-sm text-slate-500">{game.nameEn || '—'} · {game.category}</p></div><button onClick={() => setEditing(game)} className="h-9 rounded-lg border px-3 text-sm"><Pencil className="mr-1 inline" size={15}/>编辑</button></div><div className="grid grid-cols-2 gap-2 text-sm text-slate-600"><span><Users className="mr-1 inline" size={15}/>{game.minPlayers}–{game.maxPlayers} 人</span><span>{game.duration} 分钟 · 重度 {game.weight}</span><span>库存 {game.totalSets} 套</span><span>位置 {game.location || '未设置'}</span></div><div className="flex items-center justify-between"><span className="rounded-full bg-teal-50 px-2.5 py-1 text-xs font-medium text-teal-800">{game.status}</span><span className="text-xs text-slate-400">{game.sku || '无 SKU'}</span></div></div></article>)}</section>{!shown.length && <p className="py-16 text-center text-slate-500">未找到桌游</p>}</>}</main>
+export default function App(){
+ const [screen,setScreen]=useState('home'),[players,setPlayers]=useState(makePlayers),[step,setStep]=useState(0),[round,setRound]=useState(1),[logs,setLogs]=useState([]),[drawer,setDrawer]=useState(false),[message,setMessage]=useState('')
+ const alive=players.filter(p=>p.alive).length,selected=players.find(p=>p.selected),current=steps[step]
+ const summary=useMemo(()=>({wolves:players.filter(p=>p.camp==='狼人'&&p.alive).length,good:players.filter(p=>p.camp!=='狼人'&&p.alive).length}),[players])
+ const choose=id=>setPlayers(ps=>ps.map(p=>({...p,selected:p.id===id&&p.alive})));
+ const kill=id=>{const target=players.find(p=>p.id===id);if(!target?.alive)return;setPlayers(ps=>ps.map(p=>p.id===id?{...p,alive:false,selected:false}:p));setLogs(l=>[`第${round}${step===4?'天':'夜'}：${id}号玩家出局`,...l])}
+ const next=()=>{if(selected&&step<4){setLogs(l=>[`第${round}夜 ${current.title}：选择 ${selected.id} 号玩家`,...l]);setPlayers(ps=>ps.map(p=>({...p,selected:false})))}if(step===4){setRound(r=>r+1);setStep(0)}else setStep(s=>s+1)}
+ const newGame=()=>{setPlayers(makePlayers());setStep(0);setRound(1);setLogs([]);setScreen('game')}
+ if(screen==='game')return <main className="app-shell game-shell"><header className="topbar"><button className="icon-btn" onClick={()=>setScreen('home')} aria-label="返回首页"><ChevronLeft/></button><Brand small/><div className="top-actions"><button className="pill" onClick={()=>setDrawer(true)}><Users size={16}/> 场上 {alive} 人</button><button className="icon-btn" onClick={()=>setDrawer(true)} aria-label="设置"><Settings2 size={18}/></button></div></header><div className="game-layout"><section className="stage"><div className="phase-line"><span>第 {round} 夜</span><i/><span>{current.title}</span><i/><span>共 {players.length} 人</span></div><div className="night-card"><div className="step-icon"><current.icon size={30}/></div><p className="eyebrow">NIGHT {round} · {String(step+1).padStart(2,'0')}</p><h1>{current.title}</h1><p>{current.hint}</p>{step===2&&<div className="choice-row"><button onClick={()=>setMessage('已记录：女巫使用解药')}>使用解药</button><button onClick={()=>setMessage('已记录：女巫使用毒药')}>使用毒药</button><button onClick={()=>setMessage('已记录：女巫今晚不开药')}>不开药</button></div>}{message&&<small className="toast">{message}</small>}</div><div className="player-grid">{players.map(p=><button key={p.id} onClick={()=>choose(p.id)} className={`player-card ${p.alive?'':'dead'} ${p.selected?'selected':''}`}><span className="number">{p.id}</span><span className="player-state">{p.alive?(p.selected?'已选择':'点击选择'):'已出局'}</span>{!p.alive&&<Skull size={17}/>}</button>)}</div><div className="flow-controls"><button className="ghost-btn" disabled={step===0} onClick={()=>setStep(s=>s-1)}><ChevronLeft size={18}/> 上一步</button><button className="primary-btn" onClick={next}>{step===4?'进入下一夜':'确认，下一步'} <ChevronRight size={18}/></button></div></section><aside className="side-panel"><div className="panel-title"><span>场上情况</span><button onClick={()=>setDrawer(true)}>管理</button></div><div className="status-list">{players.map(p=><div key={p.id} className={!p.alive?'muted':''}><b>{p.id}号</b><span>{p.revealed?p.role:'身份未知'}</span><em className={p.alive?'alive':'out'}>{p.alive?'存活':'死亡'}</em></div>)}</div><button className="end-game" onClick={()=>setScreen('report')}>结束对局 <Swords size={15}/></button></aside></div>{drawer&&<PlayerDrawer {...{players,setPlayers,kill,onClose:()=>setDrawer(false)}}/>}</main>
+ if(screen==='report')return <main className="app-shell report-page"><header className="topbar"><button className="icon-btn" onClick={()=>setScreen('game')}><ChevronLeft/></button><Brand small/><button className="pill" onClick={()=>setScreen('home')}>完成</button></header><section className="report-hero"><p>GAME REPORT</p><h1>第 {round} 局 · 夜色已明</h1><div className="result-stats"><div><b>{summary.wolves}</b><span>存活狼人</span></div><div><b>{summary.good}</b><span>存活好人</span></div><div><b>{logs.length}</b><span>关键记录</span></div></div></section><section className="report-grid"><div className="report-card"><h2><Crown size={18}/> 玩家身份</h2><div className="role-roster">{players.map(p=><div key={p.id} className={roleColor(p.camp)}><b>{p.id}号</b><span>{p.role}</span><em>{p.alive?'存活':'已出局'}</em></div>)}</div></div><div className="report-card"><h2><FileText size={18}/> 游戏记录</h2>{logs.length?<ol className="timeline">{logs.map((log,i)=><li key={i}>{log}</li>)}</ol>:<p className="empty-copy">本局尚未记录任何事件。</p>}<button className="primary-btn wide" onClick={newGame}><RotateCcw size={17}/> 再来一局</button></div></section></main>
+ return <main className="app-shell home-page"><div className="home-aurora"/><header className="home-nav"><Brand/><button className="history-link" onClick={()=>setScreen('report')}><FileText size={17}/> 对局复盘</button></header><section className="home-main"><div className="intro"><div className="badge"><Sparkles size={15}/> 线下狼人杀 · 法官助手</div><h1>让每一夜的<br/><span>裁决，清晰有序。</span></h1><p>从身份配置、夜晚行动到白天放逐，<br/>一台设备掌控整局节奏。</p><div className="features"><span><Moon size={16}/> 夜晚流程引导</span><span><Eye size={16}/> 身份与状态管理</span><span><FileText size={16}/> 对局自动复盘</span></div></div><div className="setup-card"><div className="card-orbit orbit-a"/><div className="card-orbit orbit-b"/><p className="eyebrow">CREATE A NEW GAME</p><h2>今晚，谁在说谎？</h2><p className="setup-copy">默认预女猎守 · 双狼 · 三平民<br/>共 9 位玩家</p><div className="role-pills">{['预言家','女巫','猎人','守卫','狼人 ×2','平民 ×3'].map(x=><span key={x}>{x}</span>)}</div><button className="start-btn" onClick={newGame}>开始这局游戏 <ChevronRight size={19}/></button><button className="secondary-start" onClick={()=>setDrawer(true)}><Settings2 size={17}/> 调整身份配置</button></div></section><footer><span>⏾ 裁判专注于现场，而不是记忆流程</span><span>版本 1.0 · 离线可用</span></footer>{drawer&&<PlayerDrawer {...{players,setPlayers,kill,onClose:()=>setDrawer(false)}}/>}</main>
 }
+function Brand({small}) {return <div className={`brand ${small?'small':''}`}><span className="moon-mark">☾</span><b>{small?'月下裁决':'月下裁决'}</b><em>WEREWOLF JUDGE</em></div>}
+function PlayerDrawer({players,setPlayers,kill,onClose}){return <div className="modal-backdrop"><section className="drawer"><div className="drawer-head"><div><p className="eyebrow">ROLE SETUP</p><h2>身份与玩家管理</h2></div><button className="icon-btn" onClick={onClose}><X/></button></div><p className="drawer-copy">点击身份名称可切换阵营；游戏中可标记出局、公开身份。</p><div className="manage-list">{players.map(p=><div key={p.id}><b>{p.id}号</b><button className={`role-select ${roleColor(p.camp)}`} onClick={()=>setPlayers(list=>list.map(x=>x.id===p.id?{...x,camp:x.camp==='狼人'?'神职':x.camp==='神职'?'好人':'狼人',role:x.camp==='狼人'?'预言家':x.camp==='神职'?'平民':'狼人'}:x))}>{p.role}</button><button className="reveal" onClick={()=>setPlayers(list=>list.map(x=>x.id===p.id?{...x,revealed:!x.revealed}:x))}>{p.revealed?'隐藏':'公开'}</button><button className={p.alive?'kill':'revive'} onClick={()=>p.alive?kill(p.id):setPlayers(list=>list.map(x=>x.id===p.id?{...x,alive:true}:x))}>{p.alive?'出局':'复活'}</button></div>)}</div><button className="primary-btn wide" onClick={onClose}>保存设置</button></section></div>}
