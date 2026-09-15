@@ -9,6 +9,8 @@ create table if not exists public.board_games (
 );
 alter table public.board_games enable row level security;
 grant select, insert, update, delete on table public.board_games to authenticated;
+create index if not exists board_games_created_by_idx on public.board_games (created_by);
+create index if not exists board_games_updated_by_idx on public.board_games (updated_by);
 drop policy if exists "Staff can view their own board games" on public.board_games;
 drop policy if exists "Staff can add their own board games" on public.board_games;
 drop policy if exists "Staff can edit their own board games" on public.board_games;
