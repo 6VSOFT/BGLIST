@@ -1,6 +1,27 @@
 import { supabase, supabaseEnabled } from './supabase'
 
-const toRow = game => ({ id: game.id, name_zh: game.nameZh, name_en: game.nameEn || '', category: game.category, sku: game.sku || '', min_players: game.minPlayers, max_players: game.maxPlayers, age: game.age, duration: game.duration, weight: game.weight, total_sets: game.totalSets, status: game.status, location: game.location || '', bundles: game.bundles || '', images: game.images || [] })
+const IMAGE_BUCKET = 'board-game-images'
+const isDataUrl = value => typeof value === 'string' && value.startsWith('data:image/')
+
+function publicImageUrl(path) {
+  return path ? supabase.storage.from(IMAGE_BUCKET).getPublicUrl(path).data.publicUrl : ''
+}
+
+async function storeImage(gameId, image) {
+  if (image?.path) return { id: image.id, name: image.name || '桌游图片', path: image.path }
+  if (!isDataUrl(image?.url)) return { id: image.id, name: image.name || '桌游图片', url: image.url || '' }
+  const response = await fetch(image.url)
+  const file = await response.blob()
+  const path = `games/${gameId}/${image.id || crypto.randomUUID()}.jpg`
+  const { error } = await supabase.storage.from(IMAGE_BUCKET).upload(path, file, { contentType: file.type || 'image/jpeg', cacheControl: '31536000', upsert: true })
+  if (error) throw error
+  return { id: image.id, name: image.name || '桌游图片', path }
+}
+
+async function toRow(game) {
+  const images = await Promise.all((game.images || []).map(image => storeImage(game.id, image)))
+  return { id: game.id, name_zh: game.nameZh, name_en: game.nameEn || '', category: game.category, sku: game.sku || '', min_players: game.minPlayers, max_players: game.maxPlayers, age: game.age, duration: game.duration, weight: game.weight, total_sets: game.totalSets, status: game.status, location: game.location || '', bundles: game.bundles || '', images }
+}
 const toGame = row => ({ id: row.id, nameZh: row.name_zh, nameEn: row.name_en, category: row.category, sku: row.sku, minPlayers: row.min_players, maxPlayers: row.max_players, age: row.age, duration: row.duration, weight: Number(row.weight), totalSets: row.total_sets, status: row.status, location: row.location, bundles: row.bundles, images: row.images || [] })
 const gameFields = 'id,name_zh,name_en,category,sku,min_players,max_players,age,duration,weight,total_sets,status,location,bundles,created_at,updated_at'
 
@@ -33,10 +54,15 @@ export async function loadCloudGameImages(id) {
   if (!supabaseEnabled) return []
   const { data, error } = await supabase.from('board_games').select('images').eq('id', id).single()
   if (error) throw error
-  return Array.isArray(data.images) ? data.images : []
+  return Array.isArray(data.images) ? data.images.map(image => image?.path ? { ...image, url: publicImageUrl(image.path) } : image).filter(image => image?.url) : []
 }
-export async function saveCloudGame(game) { if (!supabaseEnabled) return false; const { error } = await supabase.from('board_games').upsert(toRow(game), { onConflict: 'id' }); if (error) throw error; return true }
-export async function saveCloudGames(games) { if (!supabaseEnabled || !games.length) return false; const { error } = await supabase.from('board_games').upsert(games.map(toRow), { onConflict: 'id' }); if (error) throw error; return true }
+export async function saveCloudGame(game) { if (!supabaseEnabled) return false; const { error } = await supabase.from('board_games').upsert(await toRow(game), { onConflict: 'id' }); if (error) throw error; return true }
+export async function saveCloudGames(games) {
+  if (!supabaseEnabled || !games.length) return false
+  // One game at a time prevents a large local image collection becoming one oversized SQL request.
+  for (const game of games) await saveCloudGame(game)
+  return true
+}
 export function subscribeToCloudGames(onChange, onStatus) {
   if (!supabaseEnabled) return null
   const channel = supabase.channel(`board-games-inventory-${crypto.randomUUID?.() || Date.now()}`)
