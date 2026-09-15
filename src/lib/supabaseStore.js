@@ -7,37 +7,13 @@ function publicImageUrl(path) {
   return path ? supabase.storage.from(IMAGE_BUCKET).getPublicUrl(path).data.publicUrl : ''
 }
 
-async function compressForCloud(file, maxEdge, quality) {
-  const sourceUrl = URL.createObjectURL(file)
-  try {
-    const source = await new Promise((resolve, reject) => {
-      const image = new Image()
-      image.onload = () => resolve(image)
-      image.onerror = () => reject(new Error('图片无法压缩，请重新选择该图片。'))
-      image.src = sourceUrl
-    })
-    const scale = Math.min(1, maxEdge / Math.max(source.width, source.height))
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.max(1, Math.round(source.width * scale))
-    canvas.height = Math.max(1, Math.round(source.height * scale))
-    canvas.getContext('2d').drawImage(source, 0, 0, canvas.width, canvas.height)
-    const result = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality))
-    if (!result) throw new Error('图片压缩失败，请重新选择该图片。')
-    return result
-  } finally { URL.revokeObjectURL(sourceUrl) }
-}
-
 async function storeImage(gameId, image) {
   if (image?.path) return { id: image.id, name: image.name || '桌游图片', path: image.path }
   if (!isDataUrl(image?.url)) return { id: image.id, name: image.name || '桌游图片', url: image.url || '' }
   const response = await fetch(image.url)
-  const original = await response.blob()
-  // Old local caches may contain 1600px Base64 images. Recompress before upload so each object stays below the bucket limit.
-  let file = await compressForCloud(original, 1200, 0.7)
-  if (file.size > 4_500_000) file = await compressForCloud(original, 960, 0.58)
-  if (file.size > 4_500_000) throw new Error('图片压缩后仍超过 5 MB，请换一张较小的图片。')
+  const file = await response.blob()
   const path = `games/${gameId}/${image.id || crypto.randomUUID()}.jpg`
-  const { error } = await supabase.storage.from(IMAGE_BUCKET).upload(path, file, { contentType: 'image/jpeg', cacheControl: '31536000', upsert: true })
+  const { error } = await supabase.storage.from(IMAGE_BUCKET).upload(path, file, { contentType: file.type || 'image/jpeg', cacheControl: '31536000', upsert: true })
   if (error) throw error
   return { id: image.id, name: image.name || '桌游图片', path }
 }
