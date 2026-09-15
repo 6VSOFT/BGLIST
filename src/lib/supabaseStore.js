@@ -11,15 +11,14 @@ export async function ensureSupabaseSession() {
   return session
 }
 
-export async function signInWithGoogle() {
-  if (!supabaseEnabled) throw new Error('尚未配置云端同步')
-  // Vite SPA uses Supabase's browser OAuth flow.  Returning to this exact
-  // page lets supabase-js restore the session from the callback automatically.
-  const redirectTo = `${window.location.origin}${window.location.pathname}`
-  const { data, error } = await supabase.auth.signInWithOAuth({
-    provider: 'google',
-    options: { redirectTo },
-  })
+export async function signInStaff(email, password) {
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+  if (error) throw error
+  return data.session
+}
+
+export async function signUpStaff(email, password) {
+  const { data, error } = await supabase.auth.signUp({ email, password })
   if (error) throw error
   return data
 }
