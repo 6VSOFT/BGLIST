@@ -1,22 +1,13 @@
-import { useState } from 'react'
-import { LogIn, UserPlus } from 'lucide-react'
+import { LogIn } from 'lucide-react'
 
-export default function StaffAccess({ onSignIn, onSignUp, busy, error }) {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const submit = async (event, action) => {
-    event.preventDefault()
-    await action(email.trim(), password)
-  }
-  return <section className="mb-5 rounded-2xl border border-teal-100 bg-teal-50 p-4 text-sm text-slate-700">
-    <p className="font-semibold text-teal-900">登录员工账号以同步共享库存</p>
-    <p className="mt-1 text-slate-600">登录后，所有已授权员工会看到同一份桌游资料与图片。</p>
-    <form className="mt-3 flex flex-col gap-2 sm:flex-row" onSubmit={event => submit(event, onSignIn)}>
-      <input aria-label="员工邮箱" className="bg-white" type="email" placeholder="员工邮箱" value={email} onChange={event => setEmail(event.target.value)} required />
-      <input aria-label="密码" className="bg-white" type="password" minLength="6" placeholder="密码（至少 6 位）" value={password} onChange={event => setPassword(event.target.value)} required />
-      <button disabled={busy} className="inline-flex items-center justify-center gap-1 rounded-lg bg-teal-700 px-3 py-2 font-medium text-white disabled:opacity-60"><LogIn size={16}/>登录</button>
-      <button type="button" disabled={busy} onClick={event => submit(event, onSignUp)} className="inline-flex items-center justify-center gap-1 rounded-lg border border-teal-700 px-3 py-2 font-medium text-teal-800 disabled:opacity-60"><UserPlus size={16}/>创建账号</button>
-    </form>
+export default function StaffAccess({ onGoogleSignIn, busy, error }) {
+  return <section className="rounded-2xl border border-teal-100 bg-teal-50 p-5 text-sm text-slate-700 shadow-sm">
+    <p className="font-semibold text-teal-900">使用 Google 帐号登录</p>
+    <p className="mt-1 text-slate-600">首次使用会自动建立帐号；登录后可使用云端同步与永久保存。</p>
+    <button type="button" disabled={busy} onClick={onGoogleSignIn} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-white px-4 py-3 font-medium text-slate-800 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:opacity-60">
+      <span aria-hidden="true" className="grid h-5 w-5 place-items-center rounded-full bg-white font-bold text-[#4285F4] ring-1 ring-slate-200">G</span>
+      <LogIn size={17}/>{busy ? '正在跳转到 Google…' : '使用 Google 帐号继续'}
+    </button>
     {error && <p className="mt-2 text-rose-700">{error}</p>}
   </section>
 }
